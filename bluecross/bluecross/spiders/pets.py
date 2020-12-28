@@ -1,4 +1,7 @@
 import scrapy
+from ..items import petImage
+
+from datetime import date
 
 class PetsSpider(scrapy.Spider):
     name = "pets"
@@ -17,8 +20,21 @@ class PetsSpider(scrapy.Spider):
             yield scrapy.Request(url, callback=self.parse)
 
     def parse(self, response):
-        species = response.xpath('//li[@class="pet-details_species"]').get()
-        filename = 'bluecross_test.txt'
-        with open(filename, 'w') as f:
-            f.write(species)
-        self.log(f'Saved file {filename}')
+        indiv = petImage()
+        indiv['petType'] = response.xpath('//li[@class="pet-details_species"]/text()').get().strip()
+        indiv['sex'] = response.xpath('//li[@class="pet-details_sex"]/text()').get().strip()
+        indiv['age'] = response.xpath('//li[@class="pet-details_age"]/text()').get().strip()
+        indiv['location'] = response.xpath('//li[@class="pet-details_location"]/a/text()').get().strip()
+        indiv['refNum'] = response.xpath('//li[@class="pet-details_reference"]/text()').get().strip()
+        indiv['dateScraped'] = date.today()
+
+        indiv['reserved'] = bool(response.xpath('//div[@class="banner banner--reserved"]/span/text()').get())
+
+        info = response.xpath('//li[@class="pet-details_info"]').get()
+        if info:
+            indiv['info'] = info.strip()
+        else:
+            indiv['info'] = None
+
+        indiv['description'] = " ".join(response.xpath('//div[@class="column-main"]/p/text()').getall())
+        yield indiv
