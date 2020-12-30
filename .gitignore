@@ -1,2 +1,4 @@
-envvars.txt
+*.env
 *.log
+*.db
+*__pycache__*
