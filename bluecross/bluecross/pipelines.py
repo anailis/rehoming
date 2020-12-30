@@ -1,5 +1,5 @@
-import sqlite3
-from sqlite3 import Error
+import pyodbc
+import os 
 
 class BluecrossPipeline(object):
     def __init__(self):
@@ -7,11 +7,13 @@ class BluecrossPipeline(object):
         self.create_tables()
 
     def create_connection(self):
-        try:
-           self.cxn = sqlite3.connect('rehoming.db')
-           self.csr = self.cxn.cursor()
-        except Error as e:
-            print(e)
+        server = os.environ.get('SQLSERVER')
+        database = os.environ.get('SQLDB')
+        username = os.environ.get('SQLUSR')
+        password = os.environ.get('SQLPSWRD')
+        driver = os.environ.get('SQLDRIVER')
+        self.cxn = pyodbc.connect('DRIVER='+driver+';SERVER='+server+';DATABASE='+database+';UID='+username+';PWD='+ password)
+        self.csr = self.cxn.cursor()
 
     def create_tables(self):
         self.csr.execute("""DROP TABLE IF EXISTS pets""")
