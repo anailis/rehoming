@@ -16,42 +16,49 @@ class BluecrossPipeline(object):
         self.csr = self.cxn.cursor()
 
     def create_tables(self):
+        self.csr.execute("""DROP TABLE IF EXISTS centres""")
+        self.csr.execute("""CREATE TABLE centres(
+                                 centre nvarchar(450) NOT NULL,
+                                 CONSTRAINT pk_centres_centre PRIMARY KEY CLUSTERED (centre) WITH (IGNORE_DUP_KEY = ON)
+                                 )""")
+
         self.csr.execute("""DROP TABLE IF EXISTS pets""")
-        self.csr.execute("""create table pets(
-                 petId text,
-                 species text,
-                 petType text,
-                 sex text,
-                 age text,
-                 centre text,
-                 info text,
-                 description text,
-                 height text,
-                 PRIMARY KEY (petId),
-                 FOREIGN KEY (centre) REFERENCES centres(centre)
+        self.csr.execute("""CREATE TABLE pets(
+                 petId nvarchar(450) NOT NULL,
+                 species nvarchar(450) NOT NULL,
+                 petType nvarchar(800) NULL,
+                 sex nvarchar(450) NOT NULL,
+                 age nvarchar(450) NULL,
+                 centre nvarchar(450) NOT NULL,
+                 info nvarchar(450) NULL,
+                 description text NULL,
+                 height nvarchar(450) NULL,
+                 CONSTRAINT pk_pets_petId PRIMARY KEY CLUSTERED (petId) WITH (IGNORE_DUP_KEY = ON),
+                 CONSTRAINT fk_pets_centre FOREIGN KEY (centre) 
+                    REFERENCES centres (centre) 
                  )""")
 
         # primary key is ROWID
         self.csr.execute("""DROP TABLE IF EXISTS adoptions""")
-        self.csr.execute("""create table adoptions(                          
-                         petId text,
-                         reserved bool,
-                         dateScraped date,
-                         FOREIGN KEY (petId) REFERENCES pets(petId)
+        self.csr.execute("""CREATE TABLE adoptions(                          
+                         petId nvarchar(450) NOT NULL,
+                         reserved int NOT NULL,
+                         dateScraped date NOT NULL,
+                         CONSTRAINT fk_adoptions_petId FOREIGN KEY (petId) 
+                            REFERENCES pets (petId)
                          )""")
 
-        self.csr.execute("""DROP TABLE IF EXISTS centres""")
-        self.csr.execute("""create table centres(
-                                 centre text,
-                                 PRIMARY KEY (centre)
-                                 )""")
 
     def process_item(self, item, spider):
         self.store_db(item)
         return item
 
     def store_db(self, item):
-        self.csr.execute("""INSERT OR IGNORE INTO pets VALUES (?,?,?,?,?,?,?,?,?)""", (
+        self.csr.execute("""INSERT INTO centres VALUES (?)""", (
+            item['centre'],
+        ))
+
+        self.csr.execute("""INSERT INTO pets VALUES (?,?,?,?,?,?,?,?,?)""", (
             item['petId'],
             item['species'],
             item['petType'],
@@ -67,10 +74,6 @@ class BluecrossPipeline(object):
             item['petId'],
             item['reserved'],
             item['dateScraped']
-        ))
-
-        self.csr.execute("""INSERT OR IGNORE INTO centres VALUES (?)""", (
-            item['centre'],
         ))
 
         self.cxn.commit()
