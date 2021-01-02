@@ -4,7 +4,7 @@ import os
 class BluecrossPipeline(object):
     def __init__(self):
         self.create_connection()
-        self.create_tables()
+        #self.create_tables()
 
     def create_connection(self):
         server = os.environ.get('SQLSERVER')
