@@ -17,4 +17,4 @@ RUN pip install pyodbc
 
 COPY . .
 
-CMD ["scrapy", "crawl", "bluecross"]
+CMD ["./run.sh"]
