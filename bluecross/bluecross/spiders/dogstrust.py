@@ -51,7 +51,7 @@ class DogstrustSpider(scrapy.Spider):
         else:
             indiv['description'] = "NA"
 
-        indiv['reserved'] = 1
+        indiv['reserved'] = 0
         indiv['info'] = "NA"
         indiv['height'] = None
 
