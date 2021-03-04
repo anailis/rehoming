@@ -49,10 +49,10 @@ class DogstrustSpider(scrapy.Spider):
             indiv['description'] = " ".join([value.strip() for value in description if value.strip()])
             print(indiv['description'])
         else:
-            indiv['description'] = None
+            indiv['description'] = "NA"
 
-        indiv['reserved'] = None
-        indiv['info'] = None
+        indiv['reserved'] = 1
+        indiv['info'] = "NA"
         indiv['height'] = None
 
         yield indiv
