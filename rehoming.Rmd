@@ -1,0 +1,373 @@
+---
+title: "rehoming"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+library(here)
+library(tidyverse)
+```
+
+## Introduction to Data
+
+Information about dogs and horses available for adoption was scraped from the Blue Cross and and Dog's Trust websites into a SQL Server database on Microsoft Azure. Scraping scripts were written in Python's Scrapy framework. The spiders were within a Docker image which was run automatically every 24 hours by an Azure Logic App. Data were stored in an Azure SQL Server database. This database had three tables: `centres`, `adoptions`, and `pets`. Each of the tables was obtained in delimited format by querying the database through the bcp command line utility. 
+
+The `centres` table contains one row per encountered centre. 30 different rehoming centres were encountered. 
+
+```{r}
+centres <- read_csv(here("data", "centres.csv"), 
+                    col_types = "c",
+                    col_names = c("centre_name"))
+head(centres)
+nrow(centres)
+```
+
+Each pet present on the site on a given day gets a new row in the `adoptions` table. Pets may continue to be advertised even when reserved, and when this is the case their value in the `reserved` column will be `TRUE`. There are 151,545 records in the `adoptions` table, spanning 386 days. 
+
+```{r}
+adoptions <- read_csv(here("data", "adoptions.csv"),
+                      col_names = c("pet_id", "reserved", "date_scraped"),
+                      col_types = "clD") %>%
+  distinct()
+head(adoptions)
+nrow(adoptions)
+length(unique(adoptions$date_scraped))
+```
+
+Each row in the `pets` table contains details on a single animal. Data was scraped on 6,176 unique pets. There were three malformed rows in this data, most likely due to a new line 
+character being contained within a pet description. 
+
+bcp "SELECT * FROM pets" queryout "C:\Users\s1533194\pets.csv" -c -S anailis-personal.database.windows.net -U EF1079 -d rehoming -t "|" -r '#'
+$f = (gc .\pets.csv) -join ''
+$f.split("#") > tmp.csv
+(gc .\tmp.csv) -replace '`0','' | Out-File -Encoding UTF8 final.csv
+
+```{r}
+pets <- read_delim(here("data", "pets.csv"), delim = "|",
+                   col_names = c("pet_id", "species", "pet_type", "sex",
+                                 "age", "centre_name", "info", "description",
+                                 "height"),
+                   col_types = c("c")) %>%
+  filter(!is.na(species))
+nrow(pets)
+length(unique(pets$pet_id))
+head(pets)
+```
+
+A sanity check: every pet should be represented at least once in the `adoptions` dataframe. 
+
+```{r}
+sum(pets$pet_id %in% adoptions$pet_id) == length(unique(pets$pet_id))
+```
+
+## Initial Data Exploration 
+
+### Data Sources
+
+Dogs Trust (DT) IDs begin with the prefix `DT`, whereas Blue Cross (BC) IDs are just numbers. 
+We can use this to create columns that indicate data source. 
+
+```{r}
+pets$data_source <- ifelse(str_detect(pets$pet_id, "DT"), "DT", "BC")
+adoptions$data_source <- ifelse(str_detect(adoptions$pet_id, "DT"), "DT", "BC")
+```
+
+
+Blue Cross was scraped between January and early March 2021 (63 days). After this, 
+the data source was changed to Dogs Trust, which was scraped between early March 2021 and 
+Februrary 2022 (337 days). 
+
+For every day of Blue Cross scraping, scraping was successful (63/63). However, there were 13 
+days where Dogs Trust scraping failed (324/337).
+
+```{r}
+adoptions %>%
+  group_by(data_source) %>%
+  summarise(
+    first_scrape = min(date_scraped),
+    last_script = max(date_scraped),
+    scraping_length = max(date_scraped) - min(date_scraped),
+    total_dates_scraped = length(unique(date_scraped))
+  )
+```
+
+As a consequence of the longer scrape length, more pets come from Dogs Trust than Blue Cross. 
+
+```{r}
+pets %>%
+  group_by(data_source) %>%
+  count()
+```
+
+Blue Cross lists horses and dogs, whereas Dogs Trust only lists dogs. 
+
+```{r}
+pets %>%
+  group_by(species, data_source) %>%
+  count()
+```
+
+### Listed Dates
+
+Limiting to just the Dogs Trust data, we can look at the numbers of dogs listed on each 
+day that there was a successful scrape. 
+
+```{r}
+adoptions %>%
+  filter(data_source == "DT") %>%
+  group_by(date_scraped) %>%
+  count() %>%
+ggplot(aes(x = date_scraped, y = n)) + 
+  geom_point() +
+  labs(
+    y = "Dogs Listed",
+    x = "Date"
+  ) +
+  theme_bw()
+```
+
+Let's select a random pet from the `pets` dataframe and follow the journey its data would have
+taken. Let's examine DT1021335. This pet would have been entered into `pets` the first time 
+this ID was encountered. It would have also been entered into the `adoptions` table for 
+the first time. We can see that the first time this pet was encountered was on 11/08/2021.  
+Every subsequent day pet DT1021335 was encountered, it would get yet another entry in the 
+`adoptions` table. The last entry for DT1021335 was on 11/10/2021, 61 days after it was 
+first observed. After this, pet DT1021335 was not observed again. This means that 
+DT1021335 was advertised as available for adoption for a total of 61 days. 
+
+```{r}
+pets %>%
+  filter(pet_id == "DT1021335")
+
+adoptions %>%
+  filter(pet_id == "DT1021335") %>%
+  arrange(date_scraped)
+```
+
+The first and last date observed for each pet is obtained and added to the `pets` table. 
+
+```{r}
+first_observed <- adoptions %>% 
+  select(-data_source) %>%
+  group_by(pet_id) %>%
+  slice_min(date_scraped)
+nrow(first_observed) == nrow(pets)
+
+last_observed <- adoptions %>%
+  select(-data_source) %>%
+  group_by(pet_id) %>%
+  slice_max(date_scraped)
+nrow(last_observed) == nrow(pets)
+
+pets <- pets %>%
+  left_join(last_observed, by = "pet_id") %>%
+  left_join(first_observed, by = "pet_id",
+            suffix = c(".last", ".first"))
+nrow(pets)
+```
+
+From this, the number of days a pet was listed for adoption can be calculated. 
+
+```{r}
+pets$days_listed <- pets$date_scraped.last - pets$date_scraped.first + 1
+```
+
+Most dogs at Dogs Trust are listed only for a few days, but an unfortunate few are listed 
+for hundreds of days. 
+
+```{r}
+pets %>%
+  filter(data_source == "DT") %>%
+ggplot(aes(x = days_listed)) + 
+  geom_histogram(colour = "black") +
+  labs(
+    x = "Days Listed",
+    y = "Number of Dogs"
+  ) +
+  theme_bw()
+```
+However, on the Blue Cross website pets may remain listed even when they are reserved. 
+This is why the  `adoptions` table has a `reserved` column to indicate whether the pet is
+listed as reserved. 
+So we need to add one more piece of information: the first date at which a pet was listed 
+as reserved (if at all). 
+
+```{r}
+first_reserved <- adoptions %>%
+  filter(reserved) %>%
+  group_by(pet_id) %>%
+  slice_min(date_scraped) %>%
+  select(pet_id, date_scraped) %>%
+  rename(date_scraped.reserved = date_scraped)
+
+pets <- pets %>%
+  left_join(first_reserved, by = "pet_id")
+```
+
+The days until a Blue Cross pet is reserved are calculated. 
+
+```{r}
+pets$days_until_reserved <- pets$date_scraped.reserved - pets$date_scraped.first
+```
+
+### Species 
+
+Most of the animals represented are dogs. 
+
+```{r}
+pets %>%
+  group_by(species) %>%
+  count()
+```
+
+Dogs never have an entry in their height columns, whereas only one of the 63 horses 
+identified had a missing height field. 
+
+```{r}
+pets %>% 
+  group_by(species) %>%
+  summarise(
+    missing_height = sum(is.na(height)),
+    prop_missing_height = sum(is.na(height))/n()
+    )
+```
+
+### Age
+
+Age is represented differently for Blue Cross and Dogs Trust. Blue Cross has an exact age (e.g. 5 years 2 months), whereas Dogs Trust uses a system of 6 age categories. 
+
+```{r}
+pets %>%
+  filter(data_source == "BC") %>%
+  select(age) %>%
+  distinct() %>%
+  head()
+
+pets %>%
+  filter(data_source == "DT") %>%
+  select(age) %>%
+  distinct()
+```
+
+I separate the Dogs Trust data into its own dataframe, `dogstrust_pets`, so I can turn 
+the age categories into factor levels. 
+
+```{r}
+dt_age_levels <- c("0 to 6 Months", "6 to 12 Months", "1 to 2 Years",
+            "2 to 5 Years", "5 to 7 Years", "8 and over")
+
+dogstrust_pets <- pets %>%
+  filter(data_source == "DT") %>%
+  mutate(age = fct_relevel(age, dt_age_levels))
+```
+
+Most pets are in the 2 to 5 year age bracket. Notably there are a large number of senior dogs,
+over 8 years old. 
+
+```{r}
+dogstrust_pets %>%
+ggplot(aes(x = age)) + 
+  geom_bar(colour = "black") + 
+  labs(
+    x = "Age Group",
+    y = "Number of Dogs"
+  ) + 
+  theme_bw()
+```
+
+In all age groups, there were a small number of dogs listed for a very long time. However, 
+the violin plot does demonstrate that puppies (dogs between the ages of 0 and 6 months), 
+were less likely to have these extreme listing times compared to dogs in other age groups. 
+
+```{r}
+dogstrust_pets %>%
+ggplot(aes(x = age, y = days_listed)) + 
+  geom_violin(fill = "grey") + 
+  labs(
+    x = "Age Group",
+    y = "Days Listed"
+  ) + 
+  theme_bw()
+```
+
+The median time a puppy between 0 and 6 months was listed was just one day. 
+
+```{r}
+dogstrust_pets %>%
+  group_by(age) %>%
+  summarise(
+    mean_days_listed = mean(days_listed),
+    median_days_listed = median(days_listed),
+    min_days_listed = min(days_listed),
+    max_days_listed = max(days_listed)
+  )
+
+dogstrust_pets %>%
+  filter(age == "0 to 6 Months" & days_listed == 338) %>%
+  select(description)
+```
+
+### Sex
+
+Male dogs made up 60.6% of all dogs listed, and 60.5% of all dogs listed on Dogs Trust. 
+
+```{r}
+pets %>%
+  group_by(species, sex) %>%
+  count()
+
+dogstrust_pets %>%
+  group_by(sex) %>%
+  count()
+```
+
+### Breed
+
+The most commonly listed breed is simply "a crossbreed". The next most common breeds are JRTs, lurchers, and greyhounds. 
+
+```{r}
+dogstrust_pets %>%
+  group_by(pet_type) %>%
+  count() %>%
+  arrange(desc(n))
+```
+
+
+### Special Requirements 
+
+Pets with the string Medic/medic in their description may have medical needs. 
+
+```{r}
+dogstrust_pets$medical_needs <- str_detect(dogstrust_pets$description, "[m|M]edic")
+```
+
+The number of dogs with Medic/medic in their description is greater for age groups 
+representing older dogs, and is highest for the senior dog category (8 and over).
+
+```{r}
+dogstrust_pets %>%
+  filter(medical_needs) %>%
+ggplot(aes(x = age)) + 
+  geom_bar(colour = "black") + 
+  labs(
+    y = "Number of Dogs",
+    x = "Age Group"
+  ) +
+  theme_bw()
+```
+
+```{r}
+dogstrust_pets %>%
+  filter(age == "0 to 6 Months" & medical_needs)
+
+dogstrust_pets %>%
+  filter(age == "0 to 6 Months") %>%
+  arrange(desc(days_listed))
+```
+
+### Sentiment 
+
+Look for commonly occuring words in descriptions:
+e.g. "Medical", "medication" 
